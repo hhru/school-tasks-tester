@@ -1,0 +1,13 @@
+{
+  "name": "school-task-tester",
+  "version": "1.0.0",
+  "main": "tester.js",
+  "scripts": {
+    "configure": "node configure.js",
+    "test": "node tester.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
