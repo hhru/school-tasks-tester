@@ -1,6 +1,13 @@
 .idea
+__pycache__
+out
+
 *.iml
 .DS_Store
 node_modules
 yarn.lock
 config.json
+
+Main.java
+Main.class
+task[0-9]_*.*
