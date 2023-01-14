@@ -3,7 +3,7 @@ const fs = require('fs');
 const readline = require('readline');
 
 if (!fs.existsSync('./config.json')) {
-    throw new Error('Сначала запустите configure');
+    throw new Error('Сначала запустите yarn configure');
 }
 
 const config = require('./config.json');
@@ -11,7 +11,10 @@ const config = require('./config.json');
 const language_to_exec_mapping = {
     js: config.node,
     py: config.python,
-    java: config.java,
+    java: {
+        runner: config.java,
+        compiler: config.javac,
+    },
 };
 
 const log_green = (message) => console.log('\033[32m' + message + '\033[0m');
@@ -40,10 +43,57 @@ const taskSuffix = filteredArgs.length > 2 && filteredArgs[2] ? filteredArgs[2] 
 const solutionFile = `${config.year}/task${task}/task${task}${taskSuffix ? `_${taskSuffix}` : ''}.${lang}`;
 const testsFile = `${config.year}/task${task}/tests.txt`;
 
-const testSolution = (inputLines, outputLines) => {
+const compileCode = () => {
     return new Promise((resolve, reject) => {
+        fs.copyFileSync(solutionFile, 'Main.java');
+        const child = child_process.spawn(language_to_exec_mapping[lang].compiler, ['Main.java']);
+
+        child.on('exit', (code, signal) => {
+            if (code !== 0 || signal !== null) {
+                reject(`Solution compile exit code is ${code}, signal id ${signal}`);
+                return;
+            }
+            resolve();
+        });
+
+        child.stdout.pipe(process.stdout);
+        child.stderr.pipe(process.stderr);
+    });
+}
+
+const cleanUp = () => {
+    const exec = language_to_exec_mapping[lang];
+
+    if (exec.compiler) {
+        fs.unlinkSync('Main.java');
+        fs.unlinkSync('Main.class');
+    }
+}
+
+const prepareRunner = async () => {
+    const exec = language_to_exec_mapping[lang];
+
+    if (exec.compiler) {
+        console.log('Compiling...');
+
+        await compileCode();
+        return {
+            executable: exec.runner,
+            solution: 'Main',
+        }
+    }
+
+    return {
+        executable: exec,
+        solution: solutionFile,
+    }
+};
+
+
+const testSolution = (inputLines, outputLines, runner) => {
+    return new Promise(async (resolve, reject) => {
         let startTime = new Date();
-        const child = child_process.spawn(language_to_exec_mapping[lang], [solutionFile], { shell: true });
+        const child = child_process.spawn(runner.executable, [runner.solution], { shell: true });
         let resultLines = [];
 
         child.stderr.pipe(process.stderr);
@@ -76,6 +126,7 @@ const testSolution = (inputLines, outputLines) => {
                 child.stdin.write(line + '\n');
                 child.stdin.uncork();
             }
+            child.stdin.end();
         } else {
             child.stdout.pipe(process.stdout);
             process.stdin.pipe(child.stdin);
@@ -88,6 +139,8 @@ const testSolution = (inputLines, outputLines) => {
 };
 
 const processTests = async () => {
+    const runner = await prepareRunner();
+
     const fileStream = fs.createReadStream(testsFile);
 
     const rl = readline.createInterface({
@@ -99,6 +152,8 @@ const processTests = async () => {
     let inputLines = [];
     let outputLines = [];
     let currentLine = 0;
+    let testsCount = 0;
+    let failuresCount = 0;
 
 
     for await (const line of rl) {
@@ -111,13 +166,15 @@ const processTests = async () => {
         if (line === '##') {
             try {
                 console.log('test', inputLines);
-                await testSolution(inputLines, outputLines);
+                testsCount += 1;
+                await testSolution(inputLines, outputLines, runner);
             } catch (e) {
                 if (!e.runningTime) {
                     throw e;
                 }
                 const lineNum = currentLine - inputLines.length - outputLines.length - 1;
-                log_red(`Tests failed at ${testsFile}:${lineNum}, duration ${e.runningTime}ms`);
+                log_red(`Test failed at ${testsFile}:${lineNum}, duration ${e.runningTime}ms`);
+                failuresCount += 1;
             } finally {
                 inputLines = [];
                 outputLines = [];
@@ -133,20 +190,39 @@ const processTests = async () => {
             outputLines.push(line);
         }
     }
+
+    if (failuresCount) {
+        log_red(`${failuresCount} of ${testsCount} tests failed. See above messages for details`)
+    } else {
+        log_green(`${testsCount} tests finished successfully`)
+    }
+
+    cleanUp();
 }
 
 const processBigTest = async () => {
-    const inputLines = fs.readFileSync(`${config.year}/task${task}/bigtest.txt`).toString('utf-8').split('\n');
-    const outputLines = fs.readFileSync(`${config.year}/task${task}/biganswer.txt`).toString('utf-8').split('\n');
+    const runner = await prepareRunner();
+
+    const inputLines = fs.readFileSync(`${config.year}/task${task}/bigtest.txt`)
+        .toString('utf-8')
+        .split('\n')
+        .filter(item => !!item);
+    const outputLines = fs.readFileSync(`${config.year}/task${task}/biganswer.txt`)
+        .toString('utf-8')
+        .split('\n')
+        .filter(item => !!item);
+
     console.log('Running bigtest.txt');
     try {
-        await testSolution(inputLines, outputLines);
+        await testSolution(inputLines, outputLines, runner);
     } catch (e) {
         if (!e.runningTime) {
             throw e;
         }
         log_red(`Big test failed, duration ${e.runningTime}ms`);
     }
+
+    cleanUp();
 };
 
 if (isJustRun) {
