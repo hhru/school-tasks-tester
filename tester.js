@@ -225,8 +225,13 @@ const processBigTest = async () => {
     cleanUp();
 };
 
+const processRun = async () => {
+    const runner = await prepareRunner();
+    await testSolution(undefined, undefined, runner);
+}
+
 if (isJustRun) {
-    testSolution();
+    processRun();
 } else if (isBig) {
     processBigTest();
 } else {
